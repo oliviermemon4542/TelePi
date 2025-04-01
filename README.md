@@ -1,0 +1,375 @@
+# TelePi
+
+**Run your Pi coding agent from Telegram: voice prompts, screenshots, session handoff, and terminal handback.**
+
+TelePi is a Telegram bridge for the [Pi coding agent](https://github.com/badlogic/pi-mono). It runs locally on your machine, opens real Pi sessions in your repositories, lets you continue from your phone, and hands the exact same session back to the terminal when you return.
+
+**Who this is for:** developers already using Pi who want a safe mobile control surface for coding-agent work: reply from the train, send a screenshot, dictate a prompt, watch progress, then resume in the CLI without losing context.
+
+Early open-source release: **80+ stars, 13 forks, and hundreds of npm downloads**. Current npm release: `@futurelab-studio/telepi` **v0.4.2**, with macOS `launchd`, Linux `systemd --user`, image prompts, prompt inbox, local/cloud voice transcription, and Pi command bridging. Read the [Futurelab TelePi deep dive](https://futurelab.studio/blog/telepi-telegram-remote-control-for-pi/) for the longer story.
+
+> **Demo placeholder:** GIF coming soon. The core loop is: Pi CLI `/handoff` → Telegram text/voice/image prompt → `/handback` → resume the same Pi session in your terminal.
+
+## Try it in 5 minutes
+
+You need:
+
+- **Node.js 22.19+**
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- Your numeric Telegram user ID for the allowlist
+- Pi installed and authenticated locally (`~/.pi/agent/auth.json` exists after a working Pi login)
+
+Install the npm package and run the guided setup:
+
+```bash
+npm install -g @futurelab-studio/telepi
+telepi setup
+telepi status
+```
+
+`telepi setup` asks for your bot token, allowed Telegram user IDs, and default workspace. It installs the local service for your platform and the Pi `/handoff` extension.
+
+**Success checkpoint:** open Telegram and send `/start` to your bot. You should see your workspace/session status and voice backend status. If not, jump to [Troubleshooting activation blockers](#troubleshooting-activation-blockers).
+
+## Your first TelePi session
+
+1. Start or open a Pi session in a repository.
+2. Run `/handoff` from Pi.
+3. Open Telegram and find your bot.
+4. Send a text prompt, voice message, or screenshot/photo.
+5. Use `/handback` to resume the same session in your terminal.
+
+## Security model
+
+TelePi gives Telegram access to a coding agent, so it is designed to stay private by default:
+
+- **Telegram user allowlist:** only IDs in `TELEGRAM_ALLOWED_USER_IDS` can interact with the bot.
+- **Workspace-scoped execution:** Pi tools are created for the active workspace and re-scoped when you switch sessions.
+- **Local user service:** installed mode runs under your own macOS/Linux user account, not as a public server.
+- **No public bot access when configured correctly:** anyone else who discovers the bot is rejected unless their Telegram user ID is allowlisted.
+- **Docker support:** run TelePi in a non-root container with explicit read/write mounts if you want stronger filesystem isolation.
+
+## Features
+
+- **Bi-directional hand-off**: Move sessions CLI → Telegram (`/handoff`) and back (`/handback`)
+- **Per-chat/topic sessions**: Every Telegram chat or forum topic gets its own Pi session, picker state, and retry history
+- **Voice and image messages**: Send voice/audio for transcription, or photos/image documents as Pi image inputs
+- **Local or cloud transcription**: [Parakeet CoreML](https://github.com/sebastian-software/parakeet-coreml) on Apple Silicon, [Sherpa-ONNX Parakeet](https://k2-fsa.github.io/sherpa/onnx/) for Intel Macs (and as a CPU fallback), or OpenAI Whisper in the cloud
+- **Session tree navigation**: Browse, branch, and label your Pi session history with `/tree`, `/branch`, `/label`
+- **Cross-workspace sessions**: Browse and switch between sessions from any project
+- **Model switching**: Change AI models on the fly via `/model`
+- **Workspace-aware `/new`**: Create sessions in any known project workspace
+- **Pi slash-command bridge**: Run discovered Pi prompt templates, skills, and extension commands from Telegram, browse them with the paginated `/commands` picker, and surface Telegram-compatible ones in the native slash-command menu
+- **External prompt inbox**: Let cron jobs, mail filters, webhooks, or log watchers drop `.txt` prompts into a watched directory
+- **Helpful recovery commands**: `/help` for quick usage guidance and `/retry` to resend the last prompt in the current chat/topic
+- **Extension dialog support**: Pi extension commands can ask for Telegram-native selects, confirms, and text input mid-command
+- **Native Telegram UX**: Topic-safe inline keyboards, typing indicators, HTML-formatted responses, friendly user-facing errors, auto-retry on rate limits
+- **Security**: Telegram user allowlist, workspace-scoped tools, Docker support
+
+## Full setup details
+
+The npm global install is the main path for TelePi on macOS (`launchd`) and Linux (`systemd --user`).
+
+1. Install TelePi globally:
+   ```bash
+   npm install -g @futurelab-studio/telepi
+   ```
+2. Run the installer using either flow:
+   ```bash
+   telepi setup
+   ```
+   When run in a terminal, `telepi setup` prompts for the three setup values TelePi currently cares about:
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_ALLOWED_USER_IDS`
+   - `TELEPI_WORKSPACE`
+
+   On a fresh config copied from `.env.example`, the example values are treated as placeholders, not saved defaults — pressing Enter still requires you to enter your real bot token, allowed user ID list, and workspace.
+
+   Or use the fast positional form:
+   ```bash
+   telepi setup <bot_token> <userids> <workspace>
+   ```
+   where `<userids>` uses the same comma-separated format as the config file, for example `123456789,987654321`.
+
+   `telepi setup` will:
+   - create or update `~/.config/telepi/config.env`
+   - preserve any existing optional config values already present in that file
+   - on macOS, install/update `~/Library/LaunchAgents/com.telepi.plist`
+   - on Linux, install/update `~/.config/systemd/user/telepi.service` and run `systemctl --user daemon-reload && systemctl --user enable --now telepi.service`
+   - install the Pi `/handoff` extension at `~/.pi/agent/extensions/telepi-handoff.ts`
+
+   If you run setup non-interactively, you must either pass all three positional values or already have them configured; TelePi fails clearly instead of writing placeholder values.
+3. Verify the installed config at `~/.config/telepi/config.env` with your real values:
+   ```dotenv
+   TELEGRAM_BOT_TOKEN=123456789:AAFf_real_token_from_botfather
+   TELEGRAM_ALLOWED_USER_IDS=111111111,222222222
+   TELEPI_WORKSPACE=/Users/you/your-main-project
+   ```
+   Notes:
+   - `TELEPI_WORKSPACE` is strongly recommended in installed mode so fresh Telegram sessions start in the right project
+   - `PI_SESSION_PATH` is usually injected automatically by `/handoff`
+   - `OPENAI_API_KEY`, `SHERPA_ONNX_MODEL_DIR`, `PI_MODEL`, and `TOOL_VERBOSITY` are optional
+4. Verify the install:
+   ```bash
+   telepi status
+   ```
+5. Open Telegram and send `/start` to your bot.
+
+Rerunning `telepi setup` after upgrades is safe; it refreshes the service unit and extension while preserving your config. After setup, `/handoff` automatically reuses the installed `launchd` service on macOS or `systemd --user` service on Linux by default.
+
+## Troubleshooting activation blockers
+
+### How do I get a Telegram bot token?
+
+Open [@BotFather](https://t.me/BotFather), send `/newbot`, choose a name and username, then copy the token into `telepi setup` as `TELEGRAM_BOT_TOKEN`.
+
+### How do I find my Telegram user ID?
+
+Message a helper bot such as [@userinfobot](https://t.me/userinfobot) and copy the numeric ID into `TELEGRAM_ALLOWED_USER_IDS`. Use comma-separated IDs for multiple people, for example `123456789,987654321`.
+
+### Bot does not respond
+
+Run `telepi status` first. Then check that the token is correct, your numeric user ID is allowlisted, you messaged the right bot, and you do not have a second TelePi process polling the same token. On macOS, logs are in `~/Library/Logs/TelePi/`; on Linux, use `journalctl --user -u telepi.service -f`.
+
+### Pi auth missing
+
+Start Pi locally once and complete authentication before using TelePi. TelePi expects Pi credentials under `~/.pi/agent/auth.json` and sessions under `~/.pi/agent/sessions/`.
+
+### Service not running
+
+Run `telepi status`. On macOS, restart the LaunchAgent with `launchctl kickstart -k gui/$UID/com.telepi`. On Linux, run `systemctl --user status telepi.service` and `systemctl --user restart telepi.service`; on headless systems you may also need `loginctl enable-linger "$USER"`.
+
+### Voice transcription not working
+
+Send `/start` and check the voice backend status. Local transcription needs `ffmpeg` plus either `parakeet-coreml` on Apple Silicon or `sherpa-onnx-node` with `SHERPA_ONNX_MODEL_DIR` for Intel/CPU fallback. Cloud transcription needs `OPENAI_API_KEY` in `~/.config/telepi/config.env`. See [Voice and Image Messages](#voice-and-image-messages) for setup details.
+
+## Development from Source
+
+Use a source checkout when you want to hack on TelePi or run the latest unreleased code.
+
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Copy the example environment file and fill it in:
+   ```bash
+   cp .env.example .env
+   ```
+   Replace the example values from `.env.example` with your real settings. At minimum set:
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_ALLOWED_USER_IDS`
+   - `TELEPI_WORKSPACE` if you want fresh Telegram sessions rooted somewhere other than the repo directory
+3. Start the bot in development mode:
+   ```bash
+   npm run dev
+   ```
+4. To test the installed-mode flow from a checkout, build first and use the built CLI entrypoint:
+   ```bash
+   npm run build
+   node dist/cli.js setup
+   # or: node dist/cli.js setup <bot_token> <userids> <workspace>
+   node dist/cli.js status
+   ```
+
+If you are working from a built checkout or GitHub Release artifact instead of a global npm install, install runtime dependencies first — the `dist/` files are not self-contained:
+
+```bash
+npm install --omit=dev
+# or: npm ci --omit=dev
+node dist/cli.js setup
+node dist/cli.js start
+```
+
+
+## Telegram Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message, session info, and voice backend status |
+| `/help` | Quick command reference and usage tips |
+| `/commands` | Open a paginated picker for TelePi commands plus discovered Pi prompt templates, skills, and extension commands |
+| `/new` | Create a fresh session (shows workspace picker if multiple known) |
+| `/retry` | Re-send the last prompt in the current chat/topic |
+| `/handback` | Hand session back to Pi CLI (copies resume command to clipboard) |
+| `/abort` | Cancel the current Pi operation |
+| `/session` | Show current session details (ID, file, workspace, model) |
+| `/sessions` | List all sessions across all workspaces with tap-to-switch buttons |
+| `/sessions <path\|id>` | Switch directly to a specific session file or session ID/prefix |
+| `/model` | Pick a different AI model from an inline keyboard |
+| `/tree` | View the session entry tree; navigate with inline buttons |
+| `/branch <id>` | Navigate to a specific entry ID (with confirmation) |
+| `/label [args]` | Add or clear labels on entries for easy reference |
+
+Sessions, inline keyboards, and `/retry` state are isolated per Telegram chat/topic, so forum topics can be used independently without colliding with each other.
+
+`/commands` now opens a mobile-friendly inline picker with pagination plus `All`, `TelePi`, and `Pi` filters. Tapping a TelePi entry runs the built-in command immediately, and tapping a Pi entry forwards the slash command into the active Pi session. Telegram-compatible discovered Pi commands (for example `/review` or `/compact`) are also synced into Telegram's native slash-command interface for the current chat. Commands that Telegram cannot represent, such as `/skill:browser-tools`, stay available through the picker and by manual typing.
+
+Any non-TelePi slash command that matches the active Pi session's discovered commands is forwarded into Pi unchanged. That means Telegram can now trigger file-based prompt templates (for example `/review`), skills (`/skill:browser-tools`), and compatible extension commands. Interactive extension commands can also open Telegram-native select/confirm/input dialogs while the command is running.
+
+## External Prompt Inbox
+
+For cron jobs, mail filters, webhooks, or log watchers, keep the external trigger outside TelePi and write a `.txt` file into a prompt inbox instead:
+
+```env
+TELEPI_PROMPT_INBOX_DIR=/absolute/path/to/prompt-inbox
+TELEPI_PROMPT_INBOX_INTERVAL_MS=60000  # optional; default 60s, minimum 1s
+```
+
+When enabled, TelePi polls the directory, processes one `.txt` file at a time, sends its trimmed contents to the root chat for the first `TELEGRAM_ALLOWED_USER_IDS` entry, and deletes the file after accepting it. If that chat is already busy, files stay queued for the next poll. Empty `.txt` files are deleted to avoid loops; subdirectories and non-`.txt` files are ignored.
+
+## Voice and Image Messages
+
+Send any Telegram **voice message** or **audio file** and TelePi will transcribe it and feed the transcript straight into Pi as a text prompt.
+
+```
+[you send a voice message]
+🎤 "How does the session hand-off work?" (via parakeet)
+
+[Pi responds normally]
+```
+
+TelePi supports three transcription backends and picks the best available one automatically:
+
+| Backend | How to enable | Cost | Privacy |
+|---------|---------------|------|---------|
+| **Parakeet CoreML** (local) | `npm install parakeet-coreml` + `brew install ffmpeg` | Free | On-device |
+| **Sherpa-ONNX Parakeet** (local, Intel Mac path) | `npm install sherpa-onnx-node` + download model + set `SHERPA_ONNX_MODEL_DIR` | Free | On-device |
+| **Cloud transcription** | `OPENAI_API_KEY=sk-...` for OpenAI Whisper, or `TELEPI_TRANSCRIPTION_URL`, `TELEPI_TRANSCRIPTION_MODEL`, and `TELEPI_TRANSCRIPTION_API_KEY` for a compatible provider | Provider-dependent | Cloud |
+
+TelePi tries backends in this order:
+
+1. **Parakeet CoreML** — best local path on Apple Silicon
+2. **Sherpa-ONNX Parakeet** — the local/offline path for Intel Macs, where `parakeet-coreml` does not run (and a CPU fallback on Apple Silicon)
+3. **OpenAI Whisper or a configured compatible provider** — cloud fallback
+
+The `/start` command shows which backends are currently active.
+
+Send a Telegram **photo** or **image document** to pass it to Pi as image input. Captions become the prompt; without a caption TelePi asks Pi to analyze the image.
+
+### Installing Parakeet CoreML (local transcription on Apple Silicon)
+
+Parakeet CoreML is an optional dependency (~1.5 GB download, macOS only with Apple Silicon):
+
+```bash
+npm install parakeet-coreml
+brew install ffmpeg   # required for audio decoding
+```
+
+On first use the CoreML model is downloaded automatically. Subsequent calls use the cached model.
+
+### Installing Sherpa-ONNX Parakeet (local transcription for Intel Macs)
+
+This is the recommended local transcription path on Intel Macs, since `parakeet-coreml` is Apple-Silicon-only. It can also be used on Apple Silicon, but TelePi will still prefer Parakeet CoreML there when available.
+
+Install the optional Node binding:
+
+```bash
+npm install sherpa-onnx-node
+brew install ffmpeg   # required for audio decoding
+```
+
+Download and extract the Parakeet model layout TelePi expects (`encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`). The v3 multilingual model below is the intended Intel Mac setup:
+
+```bash
+curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
+tar xvf sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
+```
+
+Point TelePi at the extracted directory:
+
+```bash
+export SHERPA_ONNX_MODEL_DIR="$(pwd)/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+```
+
+If `SHERPA_ONNX_MODEL_DIR` is set, TelePi treats missing model files or a missing `sherpa-onnx-node` package as configuration errors and will not silently fall through to OpenAI.
+
+If the native module cannot find its shared libraries on macOS, start TelePi with:
+
+```bash
+export DYLD_LIBRARY_PATH="$(pwd)/node_modules/sherpa-onnx-darwin-$(uname -m | sed 's/x86_64/x64/;s/arm64/arm64/'):${DYLD_LIBRARY_PATH}"
+```
+
+For the exact family of Sherpa Parakeet models TelePi currently supports, plus platform notes, see:
+
+- https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html
+
+### Using OpenAI Whisper (cloud transcription)
+
+Add your key to your TelePi config file (`~/.config/telepi/config.env` in installed mode, or `.env` in a source checkout):
+
+```
+OPENAI_API_KEY=sk-...
+```
+
+No additional packages are required. Supports the same audio formats Telegram delivers (Ogg Opus, MP3, M4A, WAV, etc.).
+
+### Using an OpenAI-compatible transcription provider
+
+Set a custom full transcription endpoint when your provider accepts the OpenAI-compatible multipart `audio/transcriptions` request shape. Existing `OPENAI_API_KEY` setups remain unchanged when these values are unset.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TELEPI_TRANSCRIPTION_API_KEY` | `OPENAI_API_KEY` | Credential sent to the provider |
+| `TELEPI_TRANSCRIPTION_URL` | OpenAI's `/v1/audio/transcriptions` endpoint | Full HTTP(S) endpoint |
+| `TELEPI_TRANSCRIPTION_MODEL` | `whisper-1` | Value for the multipart `model` field |
+| `TELEPI_TRANSCRIPTION_AUTH_HEADER` | unset | Custom credential-header name; unset uses `Authorization: Bearer` |
+| `TELEPI_TRANSCRIPTION_PROMPT` | unset | Optional recognition context for project-specific names and terms |
+
+For example:
+
+```bash
+TELEPI_TRANSCRIPTION_API_KEY=...
+TELEPI_TRANSCRIPTION_URL=https://provider.example/v1/audio/transcriptions
+TELEPI_TRANSCRIPTION_MODEL=provider-whisper
+TELEPI_TRANSCRIPTION_AUTH_HEADER=api-key
+TELEPI_TRANSCRIPTION_PROMPT="Conversation about TelePi and Pi coding-agent sessions."
+```
+
+TelePi removes URL credentials, queries, and fragments from endpoint details shown in errors.
+
+## Session Tree Navigation
+
+Every prompt and response in Pi is stored as a tree of entries. TelePi exposes this tree so you can review history and jump back to any point to create a new branch.
+
+### `/tree`
+
+Shows the session entry tree as a preformatted diagram with inline navigation buttons.
+
+```
+/tree        — default view (last 10 entries, branch points highlighted)
+/tree all    — full tree with navigation buttons on every entry
+/tree user   — user messages only
+```
+
+Inline buttons let you switch between filter modes without retyping the command.
+
+### `/branch <id>`
+
+Navigate to any entry by its short 4-character ID (shown in `/tree`). TelePi asks for confirmation and offers two options:
+
+- **Navigate here** — moves the session leaf to the selected entry; your next message creates a new branch from that point
+- **Navigate + Summarize** — same, but first generates a concise summary of the branch you are leaving
+
+### `/label [args]`
+
+Attach human-readable labels to entries so you can find them easily in `/tree`.
+
+```
+/label fix-auth          — label the current leaf "fix-auth"
+/label <id> fix-auth     — label a specific entry
+/label clear <id>        — remove a label
+/label                   — list all labels in the session
+```
+
+Labeled entries are highlighted in `/tree` output and shown in `/branch` confirmations.
+
+## Session Hand-off
+
+TelePi supports seamless bi-directional session hand-off between Pi CLI and Telegram. Both directions preserve the **full conversation context** — the JSONL session file is the single source of truth, and whichever side opens it gets the complete history, including any messages added by the other side.
+
+### CLI → Telegram (`/handoff`)
+
+You're working in Pi CLI on your laptop and want to continue from your phone:
+
+1. **In Pi CLI**, type `/handoff`
+2. The extension hands off your current session to TelePi — in direct mode 
