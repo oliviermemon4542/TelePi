@@ -1,0 +1,10 @@
+{
+  "name": "telepi",
+  "version": "0.1.0",
+  "description": "Telegram bridge for the Pi coding agent \u2014 continue sessions from your phone with voice, images, and handback",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
